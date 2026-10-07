@@ -34,6 +34,7 @@ import {
   Zap,
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
+import { trpc } from "./lib/trpc";
 
 type Role = "admin" | "owner" | "operator";
 type Mode = "Balanced" | "Lowest Cost" | "Lowest CO₂" | "Fastest";
@@ -52,6 +53,7 @@ type Cargo = {
   waterway: number;
   road: number;
   recommendation: "Waterway" | "Road";
+  dbId?: number;
 };
 
 type Boat = {
@@ -63,6 +65,7 @@ type Boat = {
   route: string;
   eta: string;
   operator: string;
+  dbId?: number;
 };
 
 const initialCargo: Cargo[] = [
@@ -92,8 +95,59 @@ function App() {
   const [role, setRole] = useState<Role>("admin");
   const [active, setActive] = useState("Overview");
   const [mode, setMode] = useState<Mode>("Balanced");
-  const [cargo, setCargo] = useState(initialCargo);
-  const [boats, setBoats] = useState(initialBoats);
+  
+  const utils = trpc.useUtils();
+  const { data: dbShipments } = trpc.shipments.list.useQuery();
+  const { data: dbTrips } = trpc.trips.list.useQuery();
+  
+  const createShipment = trpc.shipments.create.useMutation({
+    onSuccess: () => {
+      utils.shipments.list.invalidate();
+      toast.success("Cargo posted", { description: "Your instant quote is ready to review." });
+    }
+  });
+
+  const updateShipmentStatus = trpc.shipments.updateStatus.useMutation({
+    onSuccess: () => utils.shipments.list.invalidate()
+  });
+
+  const [cargoOverrides, setCargoOverrides] = useState<Record<string, Partial<Cargo>>>({});
+  const [boatOverrides, setBoatOverrides] = useState<Record<string, Partial<Boat>>>({});
+
+  const cargo: Cargo[] = useMemo(() => {
+    const list = (!dbShipments || dbShipments.length === 0) ? initialCargo : dbShipments.map((s: any) => ({
+      id: `CG-2026-${String(s.id).padStart(4, "0")}`,
+      route: `${s.originTerminalId} → ${s.destinationTerminalId}`,
+      origin: s.originTerminalId,
+      destination: s.destinationTerminalId,
+      type: s.cargoType,
+      tonnes: s.weightTonnes,
+      status: s.status === "open" ? "Pending" : s.status === "assigned" ? "Awaiting operator" : s.status === "in_transit" ? "In transit" : s.status === "completed" ? "Delivered" : "Pending",
+      urgency: "Normal",
+      eta: "14 Oct · 16:30",
+      owner: "System",
+      waterway: 3.92,
+      road: 5.4,
+      recommendation: "Waterway" as const,
+      dbId: s.id
+    }));
+    return list.map(item => cargoOverrides[item.id] ? { ...item, ...cargoOverrides[item.id] } : item);
+  }, [dbShipments, cargoOverrides]);
+
+  const boats: Boat[] = useMemo(() => {
+    const list = (!dbTrips || dbTrips.length === 0) ? initialBoats : dbTrips.map((t: any) => ({
+      code: `B-${String(t.id).padStart(3, "0")}`,
+      name: "River Fern",
+      capacity: parseInt(t.availableCapacityTons) || 500,
+      load: 0,
+      status: (t.status === "scheduled" ? "Available" : t.status === "in_transit" ? "In transit" : "Unavailable") as Boat["status"],
+      route: `${t.departurePort} → ${t.arrivalPort}`,
+      eta: "Ready now",
+      operator: "Operator",
+      dbId: t.id
+    }));
+    return list.map(b => boatOverrides[b.code] ? { ...b, ...boatOverrides[b.code] } : b);
+  }, [dbTrips, boatOverrides]);
   const [notifications, setNotifications] = useState(initialNotifications);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showOptimize, setShowOptimize] = useState(false);
@@ -144,13 +198,19 @@ function App() {
   function publishPlan() {
     setPublished(true);
     setShowOptimize(false);
-    setCargo((current) => current.map((item) => item.status === "Pending" || item.status === "Awaiting operator" ? { ...item, status: "Awaiting operator" } : item));
-    addActivity("Plan published", "2 trips are awaiting operator acceptance.", "success");
+    
+    cargo.forEach(c => {
+      if ((c.status === "Pending" || c.status === "Draft") && c.dbId) {
+         updateShipmentStatus.mutate({ id: c.dbId, status: "assigned" });
+      }
+    });
+
+    addActivity("Plan published", "Trips are awaiting operator acceptance.", "success");
     toast.success("Plan published to operators", { description: "Owners and operators have been notified." });
   }
 
   function markUnavailable() {
-    setBoats((current) => current.map((boat) => boat.code === "B-104" ? { ...boat, status: "Unavailable" } : boat));
+    setBoatOverrides(prev => ({ ...prev, "B-104": { status: "Unavailable" } }));
     setShowRecovery(true);
     addActivity("Disruption raised", "B-104 unavailable. Recovery plan is ready for review.", "warning");
     toast.warning("B-104 marked unavailable", { description: "A recovery plan has been generated." });
@@ -158,36 +218,55 @@ function App() {
 
   function approveRecovery() {
     setShowRecovery(false);
-    setBoats((current) => current.map((boat) => boat.code === "B-104" ? { ...boat, status: "Unavailable" } : boat));
-    setCargo((current) => current.map((item) => item.id === "CG-2026-0012" ? { ...item, status: "Awaiting operator", eta: "15 Oct · 08:30" } : item));
+    setBoatOverrides(prev => ({ ...prev, "B-104": { status: "Unavailable" } }));
+    setCargoOverrides(prev => ({ ...prev, "CG-2026-0012": { status: "Awaiting operator", eta: "15 Oct · 08:30" } }));
     addActivity("Recovery plan approved", "CG-2026-0012 reassigned to B-087 with +₹8,400 cost.", "success");
     toast.success("Recovery plan approved", { description: "Cargo owners and operators have been updated." });
   }
 
   function operatorAction(action: "accept" | "decline" | "depart") {
     if (action === "accept") {
-      setCargo((current) => current.map((item) => item.id === "CG-2026-0012" ? { ...item, status: "Confirmed" } : item));
-      addActivity("Trip accepted", "B-087 accepted the CG-2026-0012 proposal.", "success");
+      cargo.forEach(c => {
+        if (c.status === "Awaiting operator" && c.dbId) {
+          updateShipmentStatus.mutate({ id: c.dbId, status: "assigned" });
+        }
+      });
+      addActivity("Trip accepted", "Operator accepted the proposal.", "success");
       toast.success("Trip proposal accepted");
     } else if (action === "decline") {
-      setCargo((current) => current.map((item) => item.id === "CG-2026-0012" ? { ...item, status: "Pending" } : item));
-      addActivity("Operator declined", "CG-2026-0012 returned to the planning pool.", "warning");
+      cargo.forEach(c => {
+        if (c.status === "Awaiting operator" && c.dbId) {
+          updateShipmentStatus.mutate({ id: c.dbId, status: "open" });
+        }
+      });
+      addActivity("Operator declined", "Cargo returned to the planning pool.", "warning");
       toast("Proposal declined", { description: "Cargo has been returned to the planning pool." });
     } else {
-      setCargo((current) => current.map((item) => item.id === "CG-2026-0011" ? { ...item, status: "In transit" } : item));
-      addActivity("Trip departed", "B-087 departed Kollam terminal.", "info");
-      toast.success("Trip marked as departed");
+      cargo.forEach(c => {
+        if (c.status === "In transit" && c.dbId) {
+          updateShipmentStatus.mutate({ id: c.dbId, status: "completed" });
+        }
+      });
+      addActivity("Trip departed", "Boat departed terminal.", "info");
+      toast.success("Trip marked as departed/completed");
     }
   }
 
   function addCargo(form: HTMLFormElement) {
     const data = new FormData(form);
     const quantity = Number(data.get("quantity") || 120);
-    const newCargo: Cargo = { id: `CG-2026-${String(cargo.length + 13).padStart(4, "0")}`, route: `${data.get("origin") || "Kochi"} → ${data.get("destination") || "Alappuzha"}`, origin: String(data.get("origin") || "Kochi"), destination: String(data.get("destination") || "Alappuzha"), type: String(data.get("type") || "Cement"), tonnes: quantity, status: "Draft", urgency: String(data.get("urgency") || "Normal"), eta: "Estimate pending", owner: "Your organisation", waterway: 3.78, road: 5.12, recommendation: "Waterway" };
-    setCargo((current) => [newCargo, ...current]);
+    
+    createShipment.mutate({
+      title: `${data.get("type") || "Cement"} Delivery`,
+      origin: String(data.get("origin") || "Kochi"),
+      destination: String(data.get("destination") || "Alappuzha"),
+      cargoType: String(data.get("type") || "Cement"),
+      weightTons: quantity.toString(),
+      budgetUSD: "1000",
+    });
+    
     setShowPost(false);
-    addActivity("Cargo posted", `${newCargo.id} added to the planning pool.`, "success");
-    toast.success("Cargo posted", { description: "Your instant quote is ready to review." });
+    addActivity("Cargo posted", `New shipment added to the planning pool.`, "success");
   }
 
   const title = role === "admin" ? "Network command center" : role === "owner" ? "Your shipments" : "Operator workspace";
@@ -199,7 +278,7 @@ function App() {
       <aside className="sidebar">
         <div className="brand"><div className="brand-mark"><Waves size={20} /></div><div><strong>waterway</strong><span>smart logistics</span></div></div>
         <div className="workspace-label">WORKSPACE</div>
-        <nav>{navItems.map((item) => <button key={item} onClick={() => setActive(item)} className={active === item ? "nav-item active" : "nav-item"}><NavIcon name={item} /><span>{item}</span>{item === "Network plan" && published && <i className="nav-dot" />}</button>)}</nav>
+        <nav>{navItems.map((item) => <button key={item} onClick={() => { setActive(item); setTimeout(() => document.getElementById(`section-${item}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); }} className={active === item ? "nav-item active" : "nav-item"}><NavIcon name={item} /><span>{item}</span>{item === "Network plan" && published && <i className="nav-dot" />}</button>)}</nav>
         <div className="sidebar-bottom"><button className="nav-item"><Settings2 size={17} /><span>Settings</span></button><div className="profile"><div className="avatar">{role === "admin" ? "AM" : role === "owner" ? "MB" : "RK"}</div><div><strong>{role === "admin" ? "Anita Menon" : role === "owner" ? "Malabar BuildCo" : "Ravi Kumar"}</strong><span>{role === "admin" ? "Network admin" : role === "owner" ? "Cargo owner" : "Boat operator"}</span></div><MoreHorizontal size={17} /></div></div>
       </aside>
       <main className="main-content">
@@ -222,17 +301,17 @@ function NavIcon({ name }: { name: string }) { const props = { size: 17 }; if (n
 
 function AdminDashboard({ metrics, boats, cargo, simulator, setSimulator, setShowWhy, onOptimize, onUnavailable, published }: { metrics: any; boats: Boat[]; cargo: Cargo[]; simulator: any; setSimulator: (value: any) => void; setShowWhy: (id: string) => void; onOptimize: () => void; onUnavailable: () => void; published: boolean }) {
   return <>
-    <section className="metric-row"> <Metric label="Network cost" value={money(metrics.cost)} delta="10.6%" detail="vs road baseline" positive /><Metric label="CO₂ avoided" value={`${(metrics.baselineCo2 - metrics.co2).toLocaleString()} kg`} delta="26.9%" detail="this planning cycle" positive /><Metric label="Fleet utilization" value={`${metrics.utilization}%`} delta="+21 pts" detail="vs traditional routing" positive /><Metric label="Cargo in motion" value={`${totalCargo(cargo)}T`} delta={`${cargo.length} jobs`} detail="across 3 routes" positive /></section>
-    <section className="dashboard-grid"><div className="card network-card"><div className="card-header"><div><div className="section-kicker">DIGITAL TWIN</div><h2>Network flow</h2></div><div className="legend"><span><i className="legend-dot teal" /> Waterway</span><span><i className="legend-dot amber" /> At risk</span><button className="small-icon"><MoreHorizontal size={16} /></button></div></div><NetworkMap boats={boats} /></div><div className="card activity-card"><div className="card-header"><div><div className="section-kicker">LIVE ACTIVITY</div><h2>What’s moving</h2></div><button className="text-button">View all <ArrowUpRight size={14} /></button></div><ActivityList /></div></section>
-    <section className="dashboard-grid lower"><div className="card plan-card"><div className="card-header"><div><div className="section-kicker">PLANNING POOL · {cargo.filter((item) => item.status === "Pending" || item.status === "Draft").length} JOBS</div><h2>Next best moves</h2></div><button className="button button-ghost" onClick={onOptimize}><Sparkles size={15} /> Optimize</button></div><div className="plan-list">{cargo.slice(0, 3).map((item, index) => <div className="plan-item" key={item.id}><div className="plan-index">0{index + 1}</div><div className="plan-main"><strong>{item.route}</strong><span>{item.id} · {item.tonnes}T {item.type}</span></div><div className="plan-meta"><StatusChip status={item.status} /><button className="why-button" onClick={() => setShowWhy(item.id)}>Why this plan <ArrowUpRight size={13} /></button></div></div>)}</div></div><div className="card fleet-card"><div className="card-header"><div><div className="section-kicker">FLEET STATUS</div><h2>{boats.filter((boat) => boat.status === "Available").length} boats available</h2></div><button className="text-button">Manage fleet <ArrowUpRight size={14} /></button></div><div className="fleet-list">{boats.map((boat) => <div className="fleet-row" key={boat.code}><div className={`boat-icon ${boat.status === "Unavailable" ? "danger" : boat.status === "In transit" ? "moving" : "ready"}`}><Ship size={15} /></div><div className="fleet-name"><strong>{boat.code} · {boat.name}</strong><span>{boat.route}</span></div><div className="fleet-load"><div className="load-bar"><i style={{ width: `${Math.round((boat.load / boat.capacity) * 100)}%` }} /></div><span>{boat.load}/{boat.capacity}T</span></div><StatusChip status={boat.status} /></div>)}</div></div></section>
+    <section className="metric-row" id="section-Overview"> <Metric label="Network cost" value={money(metrics.cost)} delta="10.6%" detail="vs road baseline" positive /><Metric label="CO₂ avoided" value={`${(metrics.baselineCo2 - metrics.co2).toLocaleString()} kg`} delta="26.9%" detail="this planning cycle" positive /><Metric label="Fleet utilization" value={`${metrics.utilization}%`} delta="+21 pts" detail="vs traditional routing" positive /><Metric label="Cargo in motion" value={`${totalCargo(cargo)}T`} delta={`${cargo.length} jobs`} detail="across 3 routes" positive /></section>
+    <section className="dashboard-grid"><div className="card network-card"><div className="card-header"><div><div className="section-kicker">DIGITAL TWIN</div><h2>Network flow</h2></div><div className="legend"><span><i className="legend-dot teal" /> Waterway</span><span><i className="legend-dot amber" /> At risk</span><button className="small-icon"><MoreHorizontal size={16} /></button></div></div><NetworkMap boats={boats} /></div><div className="card activity-card" id="section-Cargo pool"><div className="card-header"><div><div className="section-kicker">LIVE ACTIVITY</div><h2>What’s moving</h2></div><button className="text-button">View all <ArrowUpRight size={14} /></button></div><ActivityList /></div></section>
+    <section className="dashboard-grid lower"><div className="card plan-card" id="section-Network plan"><div className="card-header"><div><div className="section-kicker">PLANNING POOL · {cargo.filter((item) => item.status === "Pending" || item.status === "Draft").length} JOBS</div><h2>Next best moves</h2></div><button className="button button-ghost" onClick={onOptimize}><Sparkles size={15} /> Optimize</button></div><div className="plan-list">{cargo.slice(0, 3).map((item, index) => <div className="plan-item" key={item.id}><div className="plan-index">0{index + 1}</div><div className="plan-main"><strong>{item.route}</strong><span>{item.id} · {item.tonnes}T {item.type}</span></div><div className="plan-meta"><StatusChip status={item.status} /><button className="why-button" onClick={() => setShowWhy(item.id)}>Why this plan <ArrowUpRight size={13} /></button></div></div>)}</div></div><div className="card fleet-card" id="section-Fleet"><div className="card-header"><div><div className="section-kicker">FLEET STATUS</div><h2>{boats.filter((boat) => boat.status === "Available").length} boats available</h2></div><button className="text-button">Manage fleet <ArrowUpRight size={14} /></button></div><div className="fleet-list">{boats.map((boat) => <div className="fleet-row" key={boat.code}><div className={`boat-icon ${boat.status === "Unavailable" ? "danger" : boat.status === "In transit" ? "moving" : "ready"}`}><Ship size={15} /></div><div className="fleet-name"><strong>{boat.code} · {boat.name}</strong><span>{boat.route}</span></div><div className="fleet-load"><div className="load-bar"><i style={{ width: `${Math.round((boat.load / boat.capacity) * 100)}%` }} /></div><span>{boat.load}/{boat.capacity}T</span></div><StatusChip status={boat.status} /></div>)}</div></div></section>
     <section className="insight-strip"><div className="insight-icon"><Sparkles size={18} /></div><div><strong>Network insight</strong><span>{published ? "Published plan is live. Operators have 2 trip proposals waiting." : "The next optimization can save ₹33,800 and avoid 4.3T of CO₂ by pooling return loads."}</span></div><button className="button button-dark" onClick={onOptimize}>{published ? "Review published plan" : "See the recommendation"} <ArrowUpRight size={15} /></button></section>
-    <section className="simulator-inline card"><div><div className="section-kicker">QUICK WHAT-IF</div><h2>Test the network before you commit</h2><p>See how a closed route or extra demand changes the plan.</p></div><div className="sim-controls"><button className={simulator.removeBoat ? "toggle active" : "toggle"} onClick={() => setSimulator({ ...simulator, removeBoat: !simulator.removeBoat })}><span /> Remove B-104</button><button className={simulator.routeClosed ? "toggle active" : "toggle"} onClick={() => setSimulator({ ...simulator, routeClosed: !simulator.routeClosed })}><span /> Close KOC → KLM</button><button className="button button-secondary" onClick={() => toast.success("Scenario recalculated", { description: `${simulator.routeClosed ? "Route closure adds 126 empty km." : "All routes open. Balanced plan is stable."}` })}><RefreshCcw size={15} /> Recalculate</button></div></section>
+    <section className="simulator-inline card" id="section-Simulator"><div><div className="section-kicker">QUICK WHAT-IF</div><h2>Test the network before you commit</h2><p>See how a closed route or extra demand changes the plan.</p></div><div className="sim-controls"><button className={simulator.removeBoat ? "toggle active" : "toggle"} onClick={() => setSimulator({ ...simulator, removeBoat: !simulator.removeBoat })}><span /> Remove B-104</button><button className={simulator.routeClosed ? "toggle active" : "toggle"} onClick={() => setSimulator({ ...simulator, routeClosed: !simulator.routeClosed })}><span /> Close KOC → KLM</button><button className="button button-secondary" onClick={() => toast.success("Scenario recalculated", { description: `${simulator.routeClosed ? "Route closure adds 126 empty km." : "All routes open. Balanced plan is stable."}` })}><RefreshCcw size={15} /> Recalculate</button></div></section>
   </>;
 }
 
-function OwnerDashboard({ cargo, onPost, onWhy }: { cargo: Cargo[]; onPost: () => void; onWhy: (id: string) => void }) { return <><section className="owner-hero card"><div><div className="section-kicker">CARGO OWNER</div><h2>Move your next load with confidence.</h2><p>Tell us what needs moving. We’ll compare every route, boat and return load for you.</p><button className="button button-primary" onClick={onPost}><Box size={16} /> Post new cargo</button></div><div className="owner-hero-stat"><span>Average waterway saving</span><strong>18.4%</strong><small>across your current lanes</small></div></section><section className="metric-row"><Metric label="Active shipments" value={String(cargo.filter((item) => item.status === "In transit" || item.status === "Confirmed").length)} delta="1 arriving today" detail="on schedule" positive /><Metric label="Planning pool" value={`${cargo.filter((item) => item.status === "Pending" || item.status === "Draft").length} jobs`} delta="Ready to optimize" detail="we’ll pick the boat" positive /><Metric label="CO₂ avoided" value="4.2T" delta="26%" detail="vs direct road" positive /></section><div className="card table-card"><div className="card-header"><div><div className="section-kicker">YOUR CARGO</div><h2>Shipments and quotes</h2></div><button className="button button-ghost" onClick={onPost}>Post cargo <ArrowUpRight size={14} /></button></div><CargoTable cargo={cargo} onWhy={onWhy} /></div></> }
+function OwnerDashboard({ cargo, onPost, onWhy }: { cargo: Cargo[]; onPost: () => void; onWhy: (id: string) => void }) { return <><section className="owner-hero card" id="section-Get a quote"><div><div className="section-kicker">CARGO OWNER</div><h2>Move your next load with confidence.</h2><p>Tell us what needs moving. We’ll compare every route, boat and return load for you.</p><button className="button button-primary" onClick={onPost}><Box size={16} /> Post new cargo</button></div><div className="owner-hero-stat"><span>Average waterway saving</span><strong>18.4%</strong><small>across your current lanes</small></div></section><section className="metric-row"><Metric label="Active shipments" value={String(cargo.filter((item) => item.status === "In transit" || item.status === "Confirmed").length)} delta="1 arriving today" detail="on schedule" positive /><Metric label="Planning pool" value={`${cargo.filter((item) => item.status === "Pending" || item.status === "Draft").length} jobs`} delta="Ready to optimize" detail="we’ll pick the boat" positive /><Metric label="CO₂ avoided" value="4.2T" delta="26%" detail="vs direct road" positive /></section><div className="card table-card" id="section-My shipments"><div className="card-header"><div><div className="section-kicker">YOUR CARGO</div><h2>Shipments and quotes</h2></div><button className="button button-ghost" onClick={onPost}>Post cargo <ArrowUpRight size={14} /></button></div><CargoTable cargo={cargo} onWhy={onWhy} /></div></> }
 
-function OperatorDashboard({ boats, cargo, onAction, onUnavailable }: { boats: Boat[]; cargo: Cargo[]; onAction: (action: "accept" | "decline" | "depart") => void; onUnavailable: () => void }) { return <><section className="metric-row"><Metric label="Fleet utilization" value="74%" delta="+8 pts" detail="this week" positive /><Metric label="Available capacity" value="342T" delta="2 boats" detail="ready to accept" positive /><Metric label="On-time rate" value="96.2%" delta="+3.8%" detail="last 30 days" positive /></section><section className="operator-grid"><div className="card proposal-card"><div className="card-header"><div><div className="section-kicker">ACTION REQUIRED</div><h2>Trip proposal</h2></div><StatusChip status="Awaiting operator" /></div><div className="proposal-route"><div className="terminal-dot">KOC</div><div className="route-line"><i /><span>132 km · 13h 20m</span><i /></div><div className="terminal-dot">ALP</div></div><div className="proposal-details"><div><span>Cargo</span><strong>CG-2026-0012 · 180T Cement</strong></div><div><span>Boat</span><strong>B-087 · Backwater Star</strong></div><div><span>Est. revenue</span><strong>₹72,600</strong></div><div><span>Utilization</span><strong>69%</strong></div></div><div className="proposal-reasons"><Check size={15} /><span>Capacity fit</span><Check size={15} /><span>Supported cargo</span><Check size={15} /><span>Returns by 16 Oct</span></div><div className="proposal-actions"><button className="button button-secondary" onClick={() => onAction("decline")}><X size={16} /> Decline</button><button className="button button-primary" onClick={() => onAction("accept")}><Check size={16} /> Accept trip</button></div></div><div className="card fleet-card"><div className="card-header"><div><div className="section-kicker">YOUR BOATS</div><h2>Fleet at a glance</h2></div><button className="text-button">Edit fleet <ArrowUpRight size={14} /></button></div><div className="fleet-list">{boats.slice(0, 3).map((boat) => <div className="fleet-row" key={boat.code}><div className={`boat-icon ${boat.status === "Unavailable" ? "danger" : boat.status === "In transit" ? "moving" : "ready"}`}><Ship size={15} /></div><div className="fleet-name"><strong>{boat.code} · {boat.name}</strong><span>{boat.route}</span></div><div className="fleet-load"><div className="load-bar"><i style={{ width: `${Math.round((boat.load / boat.capacity) * 100)}%` }} /></div><span>{boat.load}/{boat.capacity}T</span></div><StatusChip status={boat.status} /></div>)}</div><button className="button button-secondary full" onClick={onUnavailable}><CircleAlert size={15} /> Report breakdown</button></div></section><section className="card table-card"><div className="card-header"><div><div className="section-kicker">TRIP CONTROL</div><h2>Active trips</h2></div><button className="button button-secondary" onClick={() => onAction("depart")}><Send size={15} /> Mark departed</button></div><CargoTable cargo={cargo.filter((item) => item.status === "Confirmed" || item.status === "In transit")} /></section></> }
+function OperatorDashboard({ boats, cargo, onAction, onUnavailable }: { boats: Boat[]; cargo: Cargo[]; onAction: (action: "accept" | "decline" | "depart") => void; onUnavailable: () => void }) { return <><section className="metric-row"><Metric label="Fleet utilization" value="74%" delta="+8 pts" detail="this week" positive /><Metric label="Available capacity" value="342T" delta="2 boats" detail="ready to accept" positive /><Metric label="On-time rate" value="96.2%" delta="+3.8%" detail="last 30 days" positive /></section><section className="operator-grid"><div className="card proposal-card" id="section-Trip proposals"><div className="card-header"><div><div className="section-kicker">ACTION REQUIRED</div><h2>Trip proposal</h2></div><StatusChip status="Awaiting operator" /></div><div className="proposal-route"><div className="terminal-dot">KOC</div><div className="route-line"><i /><span>132 km · 13h 20m</span><i /></div><div className="terminal-dot">ALP</div></div><div className="proposal-details"><div><span>Cargo</span><strong>CG-2026-0012 · 180T Cement</strong></div><div><span>Boat</span><strong>B-087 · Backwater Star</strong></div><div><span>Est. revenue</span><strong>₹72,600</strong></div><div><span>Utilization</span><strong>69%</strong></div></div><div className="proposal-reasons"><Check size={15} /><span>Capacity fit</span><Check size={15} /><span>Supported cargo</span><Check size={15} /><span>Returns by 16 Oct</span></div><div className="proposal-actions"><button className="button button-secondary" onClick={() => onAction("decline")}><X size={16} /> Decline</button><button className="button button-primary" onClick={() => onAction("accept")}><Check size={16} /> Accept trip</button></div></div><div className="card fleet-card" id="section-My fleet"><div className="card-header"><div><div className="section-kicker">YOUR BOATS</div><h2>Fleet at a glance</h2></div><button className="text-button">Edit fleet <ArrowUpRight size={14} /></button></div><div className="fleet-list">{boats.slice(0, 3).map((boat) => <div className="fleet-row" key={boat.code}><div className={`boat-icon ${boat.status === "Unavailable" ? "danger" : boat.status === "In transit" ? "moving" : "ready"}`}><Ship size={15} /></div><div className="fleet-name"><strong>{boat.code} · {boat.name}</strong><span>{boat.route}</span></div><div className="fleet-load"><div className="load-bar"><i style={{ width: `${Math.round((boat.load / boat.capacity) * 100)}%` }} /></div><span>{boat.load}/{boat.capacity}T</span></div><StatusChip status={boat.status} /></div>)}</div><button className="button button-secondary full" onClick={onUnavailable}><CircleAlert size={15} /> Report breakdown</button></div></section><section className="card table-card" id="section-Active trips"><div className="card-header"><div><div className="section-kicker">TRIP CONTROL</div><h2>Active trips</h2></div><button className="button button-secondary" onClick={() => onAction("depart")}><Send size={15} /> Mark departed</button></div><CargoTable cargo={cargo.filter((item) => item.status === "Confirmed" || item.status === "In transit")} /></section></> }
 
 function Metric({ label, value, delta, detail, positive }: { label: string; value: string; delta: string; detail: string; positive?: boolean }) { return <div className="metric-card"><span>{label}</span><strong>{value}</strong><div><span className={positive ? "delta positive" : "delta"}><ArrowUpRight size={13} />{delta}</span><small>{detail}</small></div></div> }
 function totalCargo(cargo: Cargo[]) { return cargo.reduce((sum, item) => sum + item.tonnes, 0); }
