@@ -68,19 +68,6 @@ type Boat = {
   dbId?: number;
 };
 
-const initialCargo: Cargo[] = [
-  { id: "CG-2026-0012", route: "Kochi → Alappuzha", origin: "Kochi", destination: "Alappuzha", type: "Cement", tonnes: 180, status: "Awaiting operator", urgency: "High", eta: "14 Oct · 16:30", owner: "Malabar BuildCo", waterway: 3.92, road: 5.4, recommendation: "Waterway" },
-  { id: "CG-2026-0011", route: "Kollam → Kottayam", origin: "Kollam", destination: "Kottayam", type: "Grain", tonnes: 95, status: "Confirmed", urgency: "Normal", eta: "13 Oct · 11:15", owner: "Kerala Grains", waterway: 4.36, road: 4.98, recommendation: "Waterway" },
-  { id: "CG-2026-0009", route: "Kochi → Kottayam", origin: "Kochi", destination: "Kottayam", type: "Bricks", tonnes: 240, status: "In transit", urgency: "Normal", eta: "12 Oct · 18:00", owner: "Southline Infra", waterway: 4.84, road: 4.6, recommendation: "Road" },
-  { id: "CG-2026-0008", route: "Alappuzha → Kollam", origin: "Alappuzha", destination: "Kollam", type: "Timber", tonnes: 72, status: "Pending", urgency: "Low", eta: "15 Oct · 09:30", owner: "Coastal Woods", waterway: 3.48, road: 5.08, recommendation: "Waterway" },
-];
-
-const initialBoats: Boat[] = [
-  { code: "B-104", name: "River Fern", capacity: 420, load: 336, status: "In transit", route: "Kochi → Alappuzha → Kochi", eta: "12 Oct · 18:00", operator: "Blue Current Logistics" },
-  { code: "B-087", name: "Backwater Star", capacity: 260, load: 182, status: "Available", route: "Kollam → Kottayam", eta: "Ready now", operator: "Delta Freight Co." },
-  { code: "B-119", name: "Matsya 4", capacity: 520, load: 468, status: "In transit", route: "Alappuzha → Kollam", eta: "13 Oct · 09:30", operator: "Blue Current Logistics" },
-  { code: "B-061", name: "Cochin Belle", capacity: 180, load: 0, status: "Available", route: "Kochi → Kottayam", eta: "Ready 13 Oct", operator: "HarborLink" },
-];
 
 const initialNotifications = [
   { id: 1, kind: "warning", title: "Delay risk detected", text: "B-104 has 68% late-arrival risk on Kochi → Alappuzha.", time: "8 min ago", unread: true },
@@ -115,38 +102,38 @@ function App() {
   const [boatOverrides, setBoatOverrides] = useState<Record<string, Partial<Boat>>>({});
 
   const cargo: Cargo[] = useMemo(() => {
-    const list = (!dbShipments || dbShipments.length === 0) ? initialCargo : dbShipments.map((s: any) => ({
+    if (!dbShipments) return [];
+    return dbShipments.map((s: any) => ({
       id: `CG-2026-${String(s.id).padStart(4, "0")}`,
-      route: `${s.originTerminalId} → ${s.destinationTerminalId}`,
-      origin: s.originTerminalId,
-      destination: s.destinationTerminalId,
+      route: `${s.origin} → ${s.destination}`,
+      origin: s.origin,
+      destination: s.destination,
       type: s.cargoType,
-      tonnes: s.weightTonnes,
+      tonnes: Number(s.weightTons) || 120,
       status: s.status === "open" ? "Pending" : s.status === "assigned" ? "Awaiting operator" : s.status === "in_transit" ? "In transit" : s.status === "completed" ? "Delivered" : "Pending",
-      urgency: "Normal",
+      urgency: Number(s.weightTons) > 150 ? "High" : "Normal",
       eta: "14 Oct · 16:30",
-      owner: "System",
+      owner: s.shipperName || "Malabar BuildCo",
       waterway: 3.92,
       road: 5.4,
       recommendation: "Waterway" as const,
       dbId: s.id
-    }));
-    return list.map(item => cargoOverrides[item.id] ? { ...item, ...cargoOverrides[item.id] } : item);
+    })).map(item => cargoOverrides[item.id] ? { ...item, ...cargoOverrides[item.id] } : item);
   }, [dbShipments, cargoOverrides]);
 
   const boats: Boat[] = useMemo(() => {
-    const list = (!dbTrips || dbTrips.length === 0) ? initialBoats : dbTrips.map((t: any) => ({
+    if (!dbTrips) return [];
+    return dbTrips.map((t: any) => ({
       code: `B-${String(t.id).padStart(3, "0")}`,
-      name: "River Fern",
-      capacity: parseInt(t.availableCapacityTons) || 500,
-      load: 0,
+      name: t.vesselName || "River Fern",
+      capacity: Math.round(Number(t.maxCapacityTons || t.availableCapacityTons) || 400),
+      load: t.status === "in_transit" ? Math.round((Number(t.availableCapacityTons) || 400) * 0.8) : 0,
       status: (t.status === "scheduled" ? "Available" : t.status === "in_transit" ? "In transit" : "Unavailable") as Boat["status"],
       route: `${t.departurePort} → ${t.arrivalPort}`,
-      eta: "Ready now",
-      operator: "Operator",
+      eta: t.status === "scheduled" ? "Ready now" : "In transit",
+      operator: t.vesselType || "Blue Current Logistics",
       dbId: t.id
-    }));
-    return list.map(b => boatOverrides[b.code] ? { ...b, ...boatOverrides[b.code] } : b);
+    })).map(b => boatOverrides[b.code] ? { ...b, ...boatOverrides[b.code] } : b);
   }, [dbTrips, boatOverrides]);
   const [notifications, setNotifications] = useState(initialNotifications);
   const [showNotifications, setShowNotifications] = useState(false);

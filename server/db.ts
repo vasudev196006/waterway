@@ -191,14 +191,28 @@ export async function createCargoCompany(data: InsertCargoCompany) {
 export async function getShipmentProposals(filter?: { status?: "open" | "assigned" | "completed" | "cancelled" }) {
   const db = await getDb();
   if (!db) return [];
+  const base = db
+    .select({
+      id: shipmentProposals.id,
+      shipperId: shipmentProposals.shipperId,
+      title: shipmentProposals.title,
+      origin: shipmentProposals.origin,
+      destination: shipmentProposals.destination,
+      weightTons: shipmentProposals.weightTons,
+      cargoType: shipmentProposals.cargoType,
+      budgetUSD: shipmentProposals.budgetUSD,
+      status: shipmentProposals.status,
+      createdAt: shipmentProposals.createdAt,
+      updatedAt: shipmentProposals.updatedAt,
+      shipperName: users.name,
+    })
+    .from(shipmentProposals)
+    .leftJoin(users, eq(shipmentProposals.shipperId, users.id));
+
   if (filter?.status) {
-    return db
-      .select()
-      .from(shipmentProposals)
-      .where(eq(shipmentProposals.status, filter.status))
-      .orderBy(desc(shipmentProposals.createdAt));
+    return base.where(eq(shipmentProposals.status, filter.status)).orderBy(desc(shipmentProposals.createdAt));
   }
-  return db.select().from(shipmentProposals).orderBy(desc(shipmentProposals.createdAt));
+  return base.orderBy(desc(shipmentProposals.createdAt));
 }
 
 export async function getShipmentProposalById(id: number) {
@@ -239,14 +253,29 @@ export async function updateShipmentProposalStatus(
 export async function getTripProposals(filter?: { status?: "scheduled" | "in_transit" | "completed" | "cancelled" }) {
   const db = await getDb();
   if (!db) return [];
+  const base = db
+    .select({
+      id: tripProposals.id,
+      operatorId: tripProposals.operatorId,
+      departurePort: tripProposals.departurePort,
+      arrivalPort: tripProposals.arrivalPort,
+      departureDate: tripProposals.departureDate,
+      availableCapacityTons: tripProposals.availableCapacityTons,
+      passengerSeats: tripProposals.passengerSeats,
+      status: tripProposals.status,
+      createdAt: tripProposals.createdAt,
+      updatedAt: tripProposals.updatedAt,
+      vesselName: boatOperators.vesselName,
+      vesselType: boatOperators.vesselType,
+      maxCapacityTons: boatOperators.maxCapacityTons,
+    })
+    .from(tripProposals)
+    .leftJoin(boatOperators, eq(tripProposals.operatorId, boatOperators.id));
+
   if (filter?.status) {
-    return db
-      .select()
-      .from(tripProposals)
-      .where(eq(tripProposals.status, filter.status))
-      .orderBy(desc(tripProposals.departureDate));
+    return base.where(eq(tripProposals.status, filter.status)).orderBy(desc(tripProposals.departureDate));
   }
-  return db.select().from(tripProposals).orderBy(desc(tripProposals.departureDate));
+  return base.orderBy(desc(tripProposals.departureDate));
 }
 
 export async function getTripProposalById(id: number) {
