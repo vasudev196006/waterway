@@ -11,6 +11,7 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "seed": "tsx server/seed.ts",
+    "db:clear": "tsx server/clear.ts",
     "db:push": "drizzle-kit generate && drizzle-kit migrate",
     "db:migrate": "drizzle-kit migrate",
     "dev:static": "vite --host 0.0.0.0 --port ${PORT:-3000} --strictPort",
