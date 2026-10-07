@@ -86,6 +86,7 @@ function App() {
   const utils = trpc.useUtils();
   const { data: dbShipments } = trpc.shipments.list.useQuery();
   const { data: dbTrips } = trpc.trips.list.useQuery();
+  const { data: dbOperators } = trpc.operators.list.useQuery();
   
   const createShipment = trpc.shipments.create.useMutation({
     onSuccess: () => {
@@ -95,9 +96,12 @@ function App() {
   });
 
   const updateShipmentStatus = trpc.shipments.updateStatus.useMutation({
-    onSuccess: () => utils.shipments.list.invalidate()
+    onSuccess: () => {
+      utils.shipments.list.invalidate();
+    }
   });
 
+  const [published, setPublished] = useState(false);
   const [cargoOverrides, setCargoOverrides] = useState<Record<string, Partial<Cargo>>>({});
   const [boatOverrides, setBoatOverrides] = useState<Record<string, Partial<Boat>>>({});
 
@@ -110,7 +114,7 @@ function App() {
       destination: s.destination,
       type: s.cargoType,
       tonnes: Number(s.weightTons) || 120,
-      status: s.status === "open" ? "Pending" : s.status === "assigned" ? "Awaiting operator" : s.status === "in_transit" ? "In transit" : s.status === "completed" ? "Delivered" : "Pending",
+      status: s.status === "open" ? (published ? "Awaiting operator" : "Pending") : s.status === "assigned" ? "In transit" : s.status === "completed" ? "Delivered" : "Pending",
       urgency: Number(s.weightTons) > 150 ? "High" : "Normal",
       eta: "14 Oct · 16:30",
       owner: s.shipperName || "Malabar BuildCo",
@@ -119,29 +123,39 @@ function App() {
       recommendation: "Waterway" as const,
       dbId: s.id
     })).map(item => cargoOverrides[item.id] ? { ...item, ...cargoOverrides[item.id] } : item);
-  }, [dbShipments, cargoOverrides]);
+  }, [dbShipments, published, cargoOverrides]);
 
   const boats: Boat[] = useMemo(() => {
-    if (!dbTrips) return [];
-    return dbTrips.map((t: any) => ({
-      code: `B-${String(t.id).padStart(3, "0")}`,
-      name: t.vesselName || "River Fern",
-      capacity: Math.round(Number(t.maxCapacityTons || t.availableCapacityTons) || 400),
-      load: t.status === "in_transit" ? Math.round((Number(t.availableCapacityTons) || 400) * 0.8) : 0,
-      status: (t.status === "scheduled" ? "Available" : t.status === "in_transit" ? "In transit" : "Unavailable") as Boat["status"],
-      route: `${t.departurePort} → ${t.arrivalPort}`,
-      eta: t.status === "scheduled" ? "Ready now" : "In transit",
-      operator: t.vesselType || "Blue Current Logistics",
-      dbId: t.id
-    })).map(b => boatOverrides[b.code] ? { ...b, ...boatOverrides[b.code] } : b);
-  }, [dbTrips, boatOverrides]);
+    const activeCargo = cargo.filter(c => c.status === "In transit");
+    if (dbOperators && dbOperators.length > 0) {
+      return dbOperators.map((op: any, index: number) => {
+        const boatCode = `B-${String(op.id || index + 1).padStart(3, "0")}`;
+        const capacity = Math.round(Number(op.maxCapacityTons) || 400);
+        const assignedCargo = activeCargo[index];
+        const load = assignedCargo ? Math.min(assignedCargo.tonnes, capacity) : 0;
+        const status = (boatOverrides[boatCode]?.status || (load > 0 ? "In transit" : "Available")) as Boat["status"];
+        const routes = ["Kochi → Alappuzha", "Kollam → Kottayam", "Alappuzha → Kollam", "Kochi → Kottayam"];
+        return {
+          code: boatCode,
+          name: op.vesselName || "River Fern",
+          capacity,
+          load,
+          status,
+          route: routes[index % routes.length],
+          eta: status === "In transit" ? "In transit" : "Ready now",
+          operator: op.vesselType || "Blue Current Logistics",
+          dbId: op.id
+        };
+      }).map(b => boatOverrides[b.code] ? { ...b, ...boatOverrides[b.code] } : b);
+    }
+    return [];
+  }, [dbOperators, cargo, boatOverrides]);
   const [notifications, setNotifications] = useState(initialNotifications);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showOptimize, setShowOptimize] = useState(false);
   const [showPost, setShowPost] = useState(false);
   const [showWhy, setShowWhy] = useState<string | null>(null);
   const [showRecovery, setShowRecovery] = useState(false);
-  const [published, setPublished] = useState(false);
   const [simulator, setSimulator] = useState({ removeBoat: false, demand: 0, routeClosed: false, roadCost: 5 });
   const [delayMinutes, setDelayMinutes] = useState(0);
 
@@ -217,46 +231,63 @@ function App() {
     toast.success("Plan published to operators", { description: "Owners and operators have been notified." });
   }
 
-  function markUnavailable() {
-    setBoatOverrides(prev => ({ ...prev, "B-104": { status: "Unavailable" } }));
+  function markUnavailable(boatCode?: string) {
+    const vessel = (boatCode && boats.find(b => b.code === boatCode)) || boats[0] || { code: "B-001", name: "River Fern" };
+    setBoatOverrides(prev => ({ ...prev, [vessel.code]: { status: "Unavailable" } }));
     setShowRecovery(true);
-    addActivity("Disruption raised", "B-104 unavailable. Recovery plan is ready for review.", "warning");
-    toast.warning("B-104 marked unavailable", { description: "A recovery plan has been generated." });
+    addActivity("Disruption raised", `${vessel.code} (${vessel.name}) reported breakdown. Emergency recovery plan active.`, "warning");
+    toast.warning(`${vessel.name} marked unavailable`, { description: "An automated rerouting recovery plan has been generated." });
   }
 
   function approveRecovery() {
     setShowRecovery(false);
-    setBoatOverrides(prev => ({ ...prev, "B-104": { status: "Unavailable" } }));
-    setCargoOverrides(prev => ({ ...prev, "CG-2026-0012": { status: "Awaiting operator", eta: "15 Oct · 08:30" } }));
-    addActivity("Recovery plan approved", "CG-2026-0012 reassigned to B-087 with +₹8,400 cost.", "success");
-    toast.success("Recovery plan approved", { description: "Cargo owners and operators have been updated." });
+    const altBoat = boats.find(b => b.status === "Available" && b.code !== "B-001") || boats[1] || { code: "B-002", name: "Backwater Star" };
+    setBoatOverrides(prev => ({
+      ...prev,
+      "B-001": { status: "Unavailable" },
+      [altBoat.code]: { status: "In transit" }
+    }));
+    addActivity("Recovery plan approved", `Cargo reassigned to ${altBoat.code} (${altBoat.name}) with zero schedule disruption.`, "success");
+    toast.success("Recovery plan approved", { description: "Vessels rerouted and cargo owners notified." });
   }
 
-  function operatorAction(action: "accept" | "decline" | "depart") {
+  function operatorAction(action: "accept" | "decline" | "depart", targetItem?: Cargo) {
     if (action === "accept") {
-      cargo.forEach(c => {
-        if (c.status === "Awaiting operator" && c.dbId) {
-          updateShipmentStatus.mutate({ id: c.dbId, status: "assigned" });
-        }
-      });
-      addActivity("Trip accepted", "Operator accepted the proposal.", "success");
-      toast.success("Trip proposal accepted");
+      if (targetItem && targetItem.dbId) {
+        updateShipmentStatus.mutate({ id: targetItem.dbId, status: "assigned" });
+        addActivity("Trip accepted", `Trip ${targetItem.id} accepted. Dispatched to Active Trips.`, "success");
+        toast.success(`Trip ${targetItem.id} accepted!`, { description: "Shipment is now In Transit under Active Trips." });
+      } else {
+        cargo.forEach(c => {
+          if ((c.status === "Awaiting operator" || c.status === "Pending") && c.dbId) {
+            updateShipmentStatus.mutate({ id: c.dbId, status: "assigned" });
+          }
+        });
+        addActivity("Trips accepted", "All proposals accepted and dispatched.", "success");
+        toast.success("All trip proposals accepted!");
+      }
     } else if (action === "decline") {
-      cargo.forEach(c => {
-        if (c.status === "Awaiting operator" && c.dbId) {
-          updateShipmentStatus.mutate({ id: c.dbId, status: "open" });
-        }
-      });
-      addActivity("Operator declined", "Cargo returned to the planning pool.", "warning");
-      toast("Proposal declined", { description: "Cargo has been returned to the planning pool." });
+      if (targetItem && targetItem.dbId) {
+        updateShipmentStatus.mutate({ id: targetItem.dbId, status: "cancelled" });
+        addActivity("Operator declined", `Proposal ${targetItem.id} declined.`, "warning");
+        toast("Proposal declined", { description: `${targetItem.id} has been declined.` });
+      } else {
+        cargo.forEach(c => {
+          if ((c.status === "Awaiting operator" || c.status === "Pending") && c.dbId) {
+            updateShipmentStatus.mutate({ id: c.dbId, status: "cancelled" });
+          }
+        });
+        addActivity("Operator declined", "Proposals declined.", "warning");
+        toast("Proposals declined");
+      }
     } else {
       cargo.forEach(c => {
         if (c.status === "In transit" && c.dbId) {
           updateShipmentStatus.mutate({ id: c.dbId, status: "completed" });
         }
       });
-      addActivity("Trip departed", "Boat departed terminal.", "info");
-      toast.success("Trip marked as departed/completed");
+      addActivity("Trip departed & delivered", "Active trips arrived at destination terminals.", "info");
+      toast.success("Active trips completed & cargo marked Delivered!");
     }
   }
 
@@ -319,12 +350,9 @@ function AdminDashboard({ metrics, boats, cargo, simulator, setSimulator, setSho
 
 function OwnerDashboard({ cargo, onPost, onWhy }: { cargo: Cargo[]; onPost: () => void; onWhy: (id: string) => void }) { return <><section className="owner-hero card" id="section-Get a quote"><div><div className="section-kicker">CARGO OWNER</div><h2>Move your next load with confidence.</h2><p>Tell us what needs moving. We’ll compare every route, boat and return load for you.</p><button className="button button-primary" onClick={onPost}><Box size={16} /> Post new cargo</button></div><div className="owner-hero-stat"><span>Average waterway saving</span><strong>18.4%</strong><small>across your current lanes</small></div></section><section className="metric-row"><Metric label="Active shipments" value={String(cargo.filter((item) => item.status === "In transit" || item.status === "Confirmed").length)} delta={`${cargo.length} total`} detail="in network" positive /><Metric label="Planning pool" value={`${cargo.filter((item) => item.status === "Pending" || item.status === "Draft").length} jobs`} delta="Ready to optimize" detail="we’ll pick the boat" positive /><Metric label="CO₂ avoided" value={`${(cargo.reduce((sum, c) => sum + c.tonnes, 0) * 0.014).toFixed(1)}T`} delta="26%" detail="vs direct road" positive /></section><div className="card table-card" id="section-My shipments"><div className="card-header"><div><div className="section-kicker">YOUR CARGO</div><h2>Shipments and quotes</h2></div><button className="button button-ghost" onClick={onPost}>Post cargo <ArrowUpRight size={14} /></button></div><CargoTable cargo={cargo} onWhy={onWhy} /></div></> }
 
-function OperatorDashboard({ boats, cargo, onAction, onUnavailable }: { boats: Boat[]; cargo: Cargo[]; onAction: (action: "accept" | "decline" | "depart") => void; onUnavailable: () => void }) {
-  const proposalCargo = cargo.find((item) => item.status === "Awaiting operator") || cargo.find((item) => item.status === "Pending");
-  const assignedBoat = boats[0] || { code: "B-087", name: "Backwater Star", capacity: 260 };
-  const originCode = (proposalCargo?.origin || "Kochi").slice(0, 3).toUpperCase();
-  const destCode = (proposalCargo?.destination || "Alappuzha").slice(0, 3).toUpperCase();
-  const estRevenue = proposalCargo ? Math.round(proposalCargo.tonnes * 390) : 0;
+function OperatorDashboard({ boats, cargo, onAction, onUnavailable }: { boats: Boat[]; cargo: Cargo[]; onAction: (action: "accept" | "decline" | "depart", targetItem?: Cargo) => void; onUnavailable: (code?: string) => void }) {
+  const proposals = cargo.filter((item) => item.status === "Awaiting operator" || item.status === "Pending");
+  const activeTrips = cargo.filter((item) => item.status === "In transit" || item.status === "Confirmed");
 
   return <>
     <section className="metric-row">
@@ -335,32 +363,43 @@ function OperatorDashboard({ boats, cargo, onAction, onUnavailable }: { boats: B
     <section className="operator-grid">
       <div className="card proposal-card" id="section-Trip proposals">
         <div className="card-header">
-          <div><div className="section-kicker">ACTION REQUIRED</div><h2>Trip proposal</h2></div>
-          <StatusChip status={proposalCargo ? proposalCargo.status : "No pending proposals"} />
+          <div><div className="section-kicker">ACTION REQUIRED · {proposals.length} PROPOSALS</div><h2>Trip proposals</h2></div>
+          <StatusChip status={proposals.length > 0 ? `${proposals.length} Pending` : "No pending proposals"} />
         </div>
-        {proposalCargo ? (
-          <>
-            <div className="proposal-route">
-              <div className="terminal-dot">{originCode}</div>
-              <div className="route-line"><i /><span>{proposalCargo.route}</span><i /></div>
-              <div className="terminal-dot">{destCode}</div>
-            </div>
-            <div className="proposal-details">
-              <div><span>Cargo</span><strong>{proposalCargo.id} · {proposalCargo.tonnes}T {proposalCargo.type}</strong></div>
-              <div><span>Assigned boat</span><strong>{assignedBoat.code} · {assignedBoat.name}</strong></div>
-              <div><span>Est. revenue</span><strong>₹{estRevenue.toLocaleString()}</strong></div>
-              <div><span>Status</span><strong>{proposalCargo.status}</strong></div>
-            </div>
-            <div className="proposal-reasons">
-              <Check size={15} /><span>Capacity fit ({proposalCargo.tonnes}T)</span>
-              <Check size={15} /><span>Certified for {proposalCargo.type}</span>
-              <Check size={15} /><span>Scheduled return leg</span>
-            </div>
-            <div className="proposal-actions">
-              <button className="button button-secondary" onClick={() => onAction("decline")}><X size={16} /> Decline</button>
-              <button className="button button-primary" onClick={() => onAction("accept")}><Check size={16} /> Accept trip</button>
-            </div>
-          </>
+        {proposals.length > 0 ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+            {proposals.map((item, idx) => {
+              const assignedBoat = boats[idx % (boats.length || 1)] || { code: "B-001", name: "River Fern" };
+              const originCode = (item.origin || "Kochi").slice(0, 3).toUpperCase();
+              const destCode = (item.destination || "Alappuzha").slice(0, 3).toUpperCase();
+              const estRevenue = Math.round(item.tonnes * 390);
+
+              return (
+                <div key={item.id} style={{ borderBottom: idx < proposals.length - 1 ? "1px solid var(--border, #e2e8f0)" : "none", paddingBottom: "1.25rem" }}>
+                  <div className="proposal-route">
+                    <div className="terminal-dot">{originCode}</div>
+                    <div className="route-line"><i /><span>{item.route}</span><i /></div>
+                    <div className="terminal-dot">{destCode}</div>
+                  </div>
+                  <div className="proposal-details">
+                    <div><span>Cargo</span><strong>{item.id} · {item.tonnes}T {item.type}</strong></div>
+                    <div><span>Assigned boat</span><strong>{assignedBoat.code} · {assignedBoat.name}</strong></div>
+                    <div><span>Est. revenue</span><strong>₹{estRevenue.toLocaleString()}</strong></div>
+                    <div><span>Status</span><StatusChip status={item.status} /></div>
+                  </div>
+                  <div className="proposal-reasons">
+                    <Check size={15} /><span>Capacity fit ({item.tonnes}T)</span>
+                    <Check size={15} /><span>Certified for {item.type}</span>
+                    <Check size={15} /><span>Scheduled return leg</span>
+                  </div>
+                  <div className="proposal-actions" style={{ marginTop: "0.75rem" }}>
+                    <button className="button button-secondary" onClick={() => onAction("decline", item)}><X size={16} /> Decline</button>
+                    <button className="button button-primary" onClick={() => onAction("accept", item)}><Check size={16} /> Accept trip</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         ) : (
           <div style={{ padding: "3rem 1rem", textAlign: "center", color: "#64748b" }}>
             No trip proposals awaiting action. When cargo is posted and published into a plan, it appears here for acceptance.
@@ -368,12 +407,12 @@ function OperatorDashboard({ boats, cargo, onAction, onUnavailable }: { boats: B
         )}
       </div>
       <div className="card fleet-card" id="section-My fleet">
-        <div className="card-header"><div><div className="section-kicker">YOUR BOATS</div><h2>Fleet at a glance</h2></div><button className="text-button">Edit fleet <ArrowUpRight size={14} /></button></div>
+        <div className="card-header"><div><div className="section-kicker">YOUR BOATS · {boats.length} REGISTERED</div><h2>Fleet at a glance</h2></div><button className="text-button">Edit fleet <ArrowUpRight size={14} /></button></div>
         <div className="fleet-list">
           {boats.length === 0 ? (
             <div style={{ padding: "2rem 1rem", textAlign: "center", color: "#64748b" }}>No boats currently registered.</div>
           ) : (
-            boats.slice(0, 3).map((boat) => (
+            boats.slice(0, 4).map((boat) => (
               <div className="fleet-row" key={boat.code}>
                 <div className={`boat-icon ${boat.status === "Unavailable" ? "danger" : boat.status === "In transit" ? "moving" : "ready"}`}><Ship size={15} /></div>
                 <div className="fleet-name"><strong>{boat.code} · {boat.name}</strong><span>{boat.route}</span></div>
@@ -383,12 +422,12 @@ function OperatorDashboard({ boats, cargo, onAction, onUnavailable }: { boats: B
             ))
           )}
         </div>
-        <button className="button button-secondary full" onClick={onUnavailable}><CircleAlert size={15} /> Report breakdown</button>
+        <button className="button button-secondary full" onClick={() => onUnavailable(boats[0]?.code || "B-001")}><CircleAlert size={15} /> Report breakdown</button>
       </div>
     </section>
     <section className="card table-card" id="section-Active trips">
-      <div className="card-header"><div><div className="section-kicker">TRIP CONTROL</div><h2>Active trips</h2></div><button className="button button-secondary" onClick={() => onAction("depart")}><Send size={15} /> Mark departed</button></div>
-      <CargoTable cargo={cargo.filter((item) => item.status === "Confirmed" || item.status === "In transit" || item.status === "assigned")} />
+      <div className="card-header"><div><div className="section-kicker">TRIP CONTROL · {activeTrips.length} ACTIVE</div><h2>Active trips</h2></div><button className="button button-secondary" onClick={() => onAction("depart")}><Send size={15} /> Mark departed</button></div>
+      <CargoTable cargo={activeTrips} />
     </section>
   </>;
 }
