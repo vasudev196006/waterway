@@ -319,7 +319,79 @@ function AdminDashboard({ metrics, boats, cargo, simulator, setSimulator, setSho
 
 function OwnerDashboard({ cargo, onPost, onWhy }: { cargo: Cargo[]; onPost: () => void; onWhy: (id: string) => void }) { return <><section className="owner-hero card" id="section-Get a quote"><div><div className="section-kicker">CARGO OWNER</div><h2>Move your next load with confidence.</h2><p>Tell us what needs moving. We’ll compare every route, boat and return load for you.</p><button className="button button-primary" onClick={onPost}><Box size={16} /> Post new cargo</button></div><div className="owner-hero-stat"><span>Average waterway saving</span><strong>18.4%</strong><small>across your current lanes</small></div></section><section className="metric-row"><Metric label="Active shipments" value={String(cargo.filter((item) => item.status === "In transit" || item.status === "Confirmed").length)} delta={`${cargo.length} total`} detail="in network" positive /><Metric label="Planning pool" value={`${cargo.filter((item) => item.status === "Pending" || item.status === "Draft").length} jobs`} delta="Ready to optimize" detail="we’ll pick the boat" positive /><Metric label="CO₂ avoided" value={`${(cargo.reduce((sum, c) => sum + c.tonnes, 0) * 0.014).toFixed(1)}T`} delta="26%" detail="vs direct road" positive /></section><div className="card table-card" id="section-My shipments"><div className="card-header"><div><div className="section-kicker">YOUR CARGO</div><h2>Shipments and quotes</h2></div><button className="button button-ghost" onClick={onPost}>Post cargo <ArrowUpRight size={14} /></button></div><CargoTable cargo={cargo} onWhy={onWhy} /></div></> }
 
-function OperatorDashboard({ boats, cargo, onAction, onUnavailable }: { boats: Boat[]; cargo: Cargo[]; onAction: (action: "accept" | "decline" | "depart") => void; onUnavailable: () => void }) { return <><section className="metric-row"><Metric label="Fleet utilization" value={`${boats.length > 0 ? Math.round((boats.reduce((sum, b) => sum + b.load, 0) / boats.reduce((sum, b) => sum + b.capacity, 0)) * 100) : 0}%`} delta="+8 pts" detail="this week" positive /><Metric label="Available capacity" value={`${boats.filter((b) => b.status === "Available").reduce((sum, b) => sum + b.capacity, 0)}T`} delta={`${boats.filter((b) => b.status === "Available").length} boats`} detail="ready to accept" positive /><Metric label="On-time rate" value="96.2%" delta="+3.8%" detail="last 30 days" positive /></section><section className="operator-grid"><div className="card proposal-card" id="section-Trip proposals"><div className="card-header"><div><div className="section-kicker">ACTION REQUIRED</div><h2>Trip proposal</h2></div><StatusChip status="Awaiting operator" /></div><div className="proposal-route"><div className="terminal-dot">KOC</div><div className="route-line"><i /><span>132 km · 13h 20m</span><i /></div><div className="terminal-dot">ALP</div></div><div className="proposal-details"><div><span>Cargo</span><strong>{cargo[0] ? `${cargo[0].id} · ${cargo[0].tonnes}T ${cargo[0].type}` : "Awaiting assignment"}</strong></div><div><span>Boat</span><strong>{boats[0] ? `${boats[0].code} · ${boats[0].name}` : "Assigned barge"}</strong></div><div><span>Est. revenue</span><strong>₹72,600</strong></div><div><span>Utilization</span><strong>69%</strong></div></div><div className="proposal-reasons"><Check size={15} /><span>Capacity fit</span><Check size={15} /><span>Supported cargo</span><Check size={15} /><span>Returns by 16 Oct</span></div><div className="proposal-actions"><button className="button button-secondary" onClick={() => onAction("decline")}><X size={16} /> Decline</button><button className="button button-primary" onClick={() => onAction("accept")}><Check size={16} /> Accept trip</button></div></div><div className="card fleet-card" id="section-My fleet"><div className="card-header"><div><div className="section-kicker">YOUR BOATS</div><h2>Fleet at a glance</h2></div><button className="text-button">Edit fleet <ArrowUpRight size={14} /></button></div><div className="fleet-list">{boats.length === 0 ? <div style={{ padding: "2rem 1rem", textAlign: "center", color: "#64748b" }}>No boats currently registered.</div> : boats.slice(0, 3).map((boat) => <div className="fleet-row" key={boat.code}><div className={`boat-icon ${boat.status === "Unavailable" ? "danger" : boat.status === "In transit" ? "moving" : "ready"}`}><Ship size={15} /></div><div className="fleet-name"><strong>{boat.code} · {boat.name}</strong><span>{boat.route}</span></div><div className="fleet-load"><div className="load-bar"><i style={{ width: `${Math.round((boat.load / boat.capacity) * 100)}%` }} /></div><span>{boat.load}/{boat.capacity}T</span></div><StatusChip status={boat.status} /></div>)}</div><button className="button button-secondary full" onClick={onUnavailable}><CircleAlert size={15} /> Report breakdown</button></div></section><section className="card table-card" id="section-Active trips"><div className="card-header"><div><div className="section-kicker">TRIP CONTROL</div><h2>Active trips</h2></div><button className="button button-secondary" onClick={() => onAction("depart")}><Send size={15} /> Mark departed</button></div><CargoTable cargo={cargo.filter((item) => item.status === "Confirmed" || item.status === "In transit")} /></section></> }
+function OperatorDashboard({ boats, cargo, onAction, onUnavailable }: { boats: Boat[]; cargo: Cargo[]; onAction: (action: "accept" | "decline" | "depart") => void; onUnavailable: () => void }) {
+  const proposalCargo = cargo.find((item) => item.status === "Awaiting operator") || cargo.find((item) => item.status === "Pending");
+  const assignedBoat = boats[0] || { code: "B-087", name: "Backwater Star", capacity: 260 };
+  const originCode = (proposalCargo?.origin || "Kochi").slice(0, 3).toUpperCase();
+  const destCode = (proposalCargo?.destination || "Alappuzha").slice(0, 3).toUpperCase();
+  const estRevenue = proposalCargo ? Math.round(proposalCargo.tonnes * 390) : 0;
+
+  return <>
+    <section className="metric-row">
+      <Metric label="Fleet utilization" value={`${boats.length > 0 ? Math.round((boats.reduce((sum, b) => sum + b.load, 0) / boats.reduce((sum, b) => sum + b.capacity, 0)) * 100) : 0}%`} delta="+8 pts" detail="this week" positive />
+      <Metric label="Available capacity" value={`${boats.filter((b) => b.status === "Available").reduce((sum, b) => sum + b.capacity, 0)}T`} delta={`${boats.filter((b) => b.status === "Available").length} boats`} detail="ready to accept" positive />
+      <Metric label="On-time rate" value="96.2%" delta="+3.8%" detail="last 30 days" positive />
+    </section>
+    <section className="operator-grid">
+      <div className="card proposal-card" id="section-Trip proposals">
+        <div className="card-header">
+          <div><div className="section-kicker">ACTION REQUIRED</div><h2>Trip proposal</h2></div>
+          <StatusChip status={proposalCargo ? proposalCargo.status : "No pending proposals"} />
+        </div>
+        {proposalCargo ? (
+          <>
+            <div className="proposal-route">
+              <div className="terminal-dot">{originCode}</div>
+              <div className="route-line"><i /><span>{proposalCargo.route}</span><i /></div>
+              <div className="terminal-dot">{destCode}</div>
+            </div>
+            <div className="proposal-details">
+              <div><span>Cargo</span><strong>{proposalCargo.id} · {proposalCargo.tonnes}T {proposalCargo.type}</strong></div>
+              <div><span>Assigned boat</span><strong>{assignedBoat.code} · {assignedBoat.name}</strong></div>
+              <div><span>Est. revenue</span><strong>₹{estRevenue.toLocaleString()}</strong></div>
+              <div><span>Status</span><strong>{proposalCargo.status}</strong></div>
+            </div>
+            <div className="proposal-reasons">
+              <Check size={15} /><span>Capacity fit ({proposalCargo.tonnes}T)</span>
+              <Check size={15} /><span>Certified for {proposalCargo.type}</span>
+              <Check size={15} /><span>Scheduled return leg</span>
+            </div>
+            <div className="proposal-actions">
+              <button className="button button-secondary" onClick={() => onAction("decline")}><X size={16} /> Decline</button>
+              <button className="button button-primary" onClick={() => onAction("accept")}><Check size={16} /> Accept trip</button>
+            </div>
+          </>
+        ) : (
+          <div style={{ padding: "3rem 1rem", textAlign: "center", color: "#64748b" }}>
+            No trip proposals awaiting action. When cargo is posted and published into a plan, it appears here for acceptance.
+          </div>
+        )}
+      </div>
+      <div className="card fleet-card" id="section-My fleet">
+        <div className="card-header"><div><div className="section-kicker">YOUR BOATS</div><h2>Fleet at a glance</h2></div><button className="text-button">Edit fleet <ArrowUpRight size={14} /></button></div>
+        <div className="fleet-list">
+          {boats.length === 0 ? (
+            <div style={{ padding: "2rem 1rem", textAlign: "center", color: "#64748b" }}>No boats currently registered.</div>
+          ) : (
+            boats.slice(0, 3).map((boat) => (
+              <div className="fleet-row" key={boat.code}>
+                <div className={`boat-icon ${boat.status === "Unavailable" ? "danger" : boat.status === "In transit" ? "moving" : "ready"}`}><Ship size={15} /></div>
+                <div className="fleet-name"><strong>{boat.code} · {boat.name}</strong><span>{boat.route}</span></div>
+                <div className="fleet-load"><div className="load-bar"><i style={{ width: `${Math.round((boat.load / boat.capacity) * 100)}%` }} /></div><span>{boat.load}/{boat.capacity}T</span></div>
+                <StatusChip status={boat.status} />
+              </div>
+            ))
+          )}
+        </div>
+        <button className="button button-secondary full" onClick={onUnavailable}><CircleAlert size={15} /> Report breakdown</button>
+      </div>
+    </section>
+    <section className="card table-card" id="section-Active trips">
+      <div className="card-header"><div><div className="section-kicker">TRIP CONTROL</div><h2>Active trips</h2></div><button className="button button-secondary" onClick={() => onAction("depart")}><Send size={15} /> Mark departed</button></div>
+      <CargoTable cargo={cargo.filter((item) => item.status === "Confirmed" || item.status === "In transit" || item.status === "assigned")} />
+    </section>
+  </>;
+}
 
 function Metric({ label, value, delta, detail, positive }: { label: string; value: string; delta: string; detail: string; positive?: boolean }) { return <div className="metric-card"><span>{label}</span><strong>{value}</strong><div><span className={positive ? "delta positive" : "delta"}><ArrowUpRight size={13} />{delta}</span><small>{detail}</small></div></div> }
 function totalCargo(cargo: Cargo[]) { return cargo.reduce((sum, item) => sum + item.tonnes, 0); }
