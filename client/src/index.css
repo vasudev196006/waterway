@@ -46,3 +46,42 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 @keyframes modal-in { from { opacity: 0; transform: translateY(8px) scale(.99); } to { opacity: 1; transform: translateY(0) scale(1); } } @keyframes drawer-in { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 1120px) { .sidebar { width: 204px; }.main-content { width: calc(100% - 204px); margin-left: 204px; }.page-wrap, .topbar { padding-left: 24px; padding-right: 24px; }.metric-row { grid-template-columns: repeat(2,1fr); }.dashboard-grid, .dashboard-grid.lower, .operator-grid { grid-template-columns: 1fr; }.simulator-inline { align-items: flex-start; flex-direction: column; }.sim-controls { flex-wrap: wrap; } }
 @media (max-width: 720px) { .sidebar { width: 64px; padding: 18px 8px; }.brand { padding: 0 7px 28px; }.brand > div:last-child, .workspace-label, .nav-item span, .profile > div:nth-child(2), .profile > svg { display: none; }.nav-item { justify-content: center; padding: 11px 7px; }.profile { justify-content: center; padding: 14px 0 0; }.main-content { width: calc(100% - 64px); margin-left: 64px; }.topbar { padding: 0 15px; height: 62px; }.mobile-menu { display: none; }.crumb span { display: none; }.help-button { display: none; }.role-switcher { max-width: 136px; }.role-switcher select { max-width: 98px; }.page-wrap { padding: 25px 15px 40px; }.page-heading { align-items: flex-start; flex-direction: column; margin-bottom: 22px; }.page-heading h1 { font-size: 26px; }.heading-actions { width: 100%; }.heading-actions .button { flex: 1; }.metric-row { gap: 8px; }.metric-card { padding: 13px; }.metric-card strong { font-size: 21px; }.card-header { padding-left: 15px; padding-right: 15px; }.legend { gap: 7px; }.legend span:nth-child(2) { display: none; }.network-map { height: 250px; margin-left: 8px; margin-right: 8px; }.map-status { gap: 8px; }.map-status span { font-size: 8px; }.insight-strip { align-items: flex-start; flex-wrap: wrap; }.insight-strip .button { margin-left: 44px; }.owner-hero { padding: 23px 20px; }.owner-hero-stat { display: none; }.mode-row { overflow-x: auto; padding-left: 17px; padding-right: 17px; }.mode-button { flex: 0 0 auto; }.before-after, .metric-compare, .recovery-stats { padding-left: 17px; padding-right: 17px; }.modal-header { padding-left: 18px; padding-right: 18px; }.modal-section, .check-list { padding-left: 18px; padding-right: 18px; }.modal-footer { padding-left: 18px; padding-right: 18px; align-items: flex-start; flex-direction: column; }.modal-footer > div { width: 100%; }.modal-footer .button { flex: 1; }.form-grid { padding: 0 18px; }.quote-preview { margin-left: 18px; margin-right: 18px; }.recommendation-row .why-button { font-size: 0; }.recommendation-row .why-button svg { width: 15px; }.proposal-details { padding-left: 15px; padding-right: 15px; }.proposal-actions { padding-left: 15px; padding-right: 15px; }.recovery-banner { margin-left: 18px; margin-right: 18px; }.recovery-stats { gap: 6px; }.recovery-stats div { padding: 8px; }.recovery-stats strong { font-size: 13px; }.reassign { padding-left: 18px; padding-right: 18px; } }
+
+/* Copilot, Quote Card, Full Simulator & Delay Styles */
+.copilot-btn { display: inline-flex; align-items: center; gap: 7px; background: #eaf5f2; border: 1px solid #cce5dc; color: #246d65; padding: 7px 12px; border-radius: 8px; font-size: 12px; font-weight: 700; transition: .18s ease; }
+.copilot-btn:hover { background: #d7eee7; color: #164f49; }
+.copilot-kbd { font-size: 9px; padding: 2px 5px; border-radius: 4px; background: #c5e1d7; color: #1a564e; margin-left: 4px; }
+.copilot-modal { width: min(640px, 100%); }
+.copilot-input-box { display: flex; align-items: center; gap: 10px; margin: 18px 24px 14px; padding: 12px 14px; background: #fff; border: 1.5px solid #3d958b; border-radius: 10px; box-shadow: 0 4px 14px rgba(47,133,124,.1); }
+.copilot-input-box input { flex: 1; border: 0; outline: none; font-size: 13px; color: #1a3834; background: transparent; }
+.copilot-suggestions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 24px 16px; }
+.copilot-chip { border: 1px solid #d9e6e0; background: #f2f7f4; color: #436962; border-radius: 999px; padding: 5px 10px; font-size: 10px; font-weight: 600; transition: .15s ease; }
+.copilot-chip:hover { background: #e2f0ea; color: #235850; border-color: #aed5c7; }
+.copilot-result { margin: 0 24px 18px; padding: 16px; background: #edf7f3; border: 1px solid #cfe5db; border-radius: 10px; }
+.copilot-intent-badge { display: inline-block; padding: 3px 8px; border-radius: 5px; font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; background: #3b8e84; color: #fff; margin-bottom: 8px; }
+.copilot-result p { margin: 0 0 10px; font-size: 12px; line-height: 1.45; color: #2b544e; }
+.quote-modal { width: min(600px, 100%); }
+.quote-card-box { margin: 20px 24px; padding: 22px; border-radius: 12px; background: #fff; border: 1px solid #dce8e1; box-shadow: 0 4px 16px rgba(27,66,60,.05); }
+.quote-badge-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.quote-badge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; font-size: 11px; font-weight: 750; }
+.quote-badge.waterway { background: #e2f5ee; color: #2a7e70; }
+.quote-badge.road { background: #fff1e0; color: #a46231; }
+.quote-prices { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
+.quote-prices strong { font-size: 26px; color: #1f3d38; letter-spacing: -.03em; }
+.quote-prices span { font-size: 13px; color: #879992; }
+.compare-track { height: 8px; background: #e4ebe6; border-radius: 999px; overflow: hidden; margin-bottom: 16px; display: flex; }
+.compare-fill-water { background: #3fa595; height: 100%; border-radius: 999px; }
+.compare-fill-road { background: #e29f57; height: 100%; border-radius: 999px; }
+.quote-meta-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px 0; border-top: 1px solid #eff4f0; border-bottom: 1px solid #eff4f0; margin-bottom: 14px; font-size: 11px; color: #516b64; }
+.quote-meta-row strong { color: #213c38; }
+.quote-expl { font-size: 11px; color: #55726b; line-height: 1.5; margin: 0 0 16px; }
+.simulator-modal { width: min(720px, 100%); }
+.sim-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 18px 24px; }
+.sim-box { background: #fff; border: 1px solid #e0e9e3; border-radius: 10px; padding: 14px; }
+.sim-box label { display: block; font-size: 11px; font-weight: 700; color: #435b55; margin-bottom: 8px; }
+.sim-box input[type="range"] { width: 100%; accent-color: #3b8e84; }
+.delta-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 10px; }
+.delta-table th, .delta-table td { padding: 9px 12px; text-align: left; border-bottom: 1px solid #eff3ef; }
+.delta-table th { color: #84958f; font-weight: 700; }
+.delta-table td strong { color: #223f39; }
+
